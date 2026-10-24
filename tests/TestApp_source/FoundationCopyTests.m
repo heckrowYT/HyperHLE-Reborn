@@ -25,6 +25,11 @@
 - (const void *)bytes;
 @end
 #endif
+#ifndef DEFINE_ME_WHEN_BUILDING_ON_MACOS
+@interface NSMutableArray : NSArray
+- (void)addObject:(id)object;
+@end
+#endif
 #include <string.h>
 
 static int copy_members_freed;
@@ -154,6 +159,18 @@ int test_NSArray_getObjects_range(void) {
     if (buffer[0] != first) result = -3;
   }
 
+  // Pocket God uses NSMutableArray, so test the inherited selector there too.
+  NSMutableArray *mutable = [[NSMutableArray alloc] init];
+  [mutable addObject:first];
+  [mutable addObject:second];
+  [mutable addObject:third];
+  if (!result) {
+    buffer[0] = buffer[1] = buffer[2] = nil;
+    [mutable getObjects:buffer range:NSMakeRange(1, 2)];
+    if (buffer[0] != second || buffer[1] != third || buffer[2] != nil)
+      result = -4;
+  }
+  [mutable release];
   [first release];
   [second release];
   [third release];
