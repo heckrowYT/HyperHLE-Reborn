@@ -2342,6 +2342,22 @@ fn glDrawElements(
     type_: GLenum,
     indices: ConstVoidPtr,
 ) {
+    // Opt-in diagnostics only. Do not alter guest GL state or consume GL errors.
+    // Enable with TOUCHHLE_TRACE_FIRST_DRAWS=1 to locate an early native draw stall.
+    let trace_first_draw = crate::env_flag_cached!("TOUCHHLE_TRACE_FIRST_DRAWS");
+    let trace_this_draw = if trace_first_draw {
+        static TRACE_COUNT: std::sync::atomic::AtomicU32 =
+            std::sync::atomic::AtomicU32::new(0);
+        TRACE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4
+    } else {
+        false
+    };
+    if trace_this_draw {
+        log!(
+            "[FIRST DRAW TRACE] glDrawElements entered: mode={:#x}, count={}, type={:#x}, indices={:#x}",
+            mode, count, type_, indices.to_bits()
+        );
+    }
     {
         use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
         static SEEN: AtomicBool = AtomicBool::new(false);
@@ -2376,6 +2392,9 @@ fn glDrawElements(
         return;
     }
     with_ctx_mem_and_shadow(env, |gles, mem, shadow| unsafe {
+        if trace_this_draw {
+            log!("[FIRST DRAW TRACE] acquired GL context; checking element buffer");
+        }
         if count > 0 && indices.is_null() && !buffer_is_bound(gles, shadow, ELEMENT_ARRAY_BUFFER) {
             log_once!(
                 "Skipping glDrawElements with positive count and null indices because no element buffer is bound"
@@ -2392,8 +2411,17 @@ fn glDrawElements(
             );
             log_es2_draw_state_once(gles, shadow, mem);
         }
+        if trace_this_draw {
+            log!("[FIRST DRAW TRACE] before vertex-array guard");
+        }
         let disabled_arrays = guard_client_vertex_arrays(gles, mem, shadow);
+        if trace_this_draw {
+            log!("[FIRST DRAW TRACE] vertex-array guard finished; before fog clamp");
+        }
         let fog_state_backup = clamp_fog_state_values(gles, shadow);
+        if trace_this_draw {
+            log!("[FIRST DRAW TRACE] fog clamp finished; preparing element indices");
+        }
         if crate::env_flag_cached!("TOUCHHLE_POTATO_NATIVE_GLES2_PC_STATE") {
             static SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
             if !SEEN.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -2411,7 +2439,16 @@ fn glDrawElements(
 
         let indices =
             translate_pointer_or_offset_to_host(gles, mem, shadow, indices, ELEMENT_ARRAY_BUFFER);
+        if trace_this_draw {
+            log!(
+                "[FIRST DRAW TRACE] before GL driver DrawElements: indices_host={:?}",
+                indices
+            );
+        }
         gles.DrawElements(mode, count, type_, indices);
+        if trace_this_draw {
+            log!("[FIRST DRAW TRACE] GL driver DrawElements returned");
+        }
         if count > 3 && crate::env_flag_cached!("TOUCHHLE_DEBUG_ES2_DRAW") {
             static FB_DUMPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
             if !FB_DUMPED.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -2444,6 +2481,9 @@ fn glDrawElements(
         restore_fog_state_values(gles, fog_state_backup);
         for index in disabled_arrays {
             gles.EnableVertexAttribArray(index);
+        }
+        if trace_this_draw {
+            log!("[FIRST DRAW TRACE] draw cleanup finished");
         }
     })
 }
