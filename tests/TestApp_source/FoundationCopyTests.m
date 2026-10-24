@@ -25,6 +25,11 @@
 - (const void *)bytes;
 @end
 #endif
+#ifndef DEFINE_ME_WHEN_BUILDING_ON_MACOS
+@interface NSMutableArray : NSArray
+- (void)addObject:(id)object;
+@end
+#endif
 #include <string.h>
 
 static int copy_members_freed;
@@ -122,6 +127,53 @@ int test_NSData_base64_data(void) {
     [encoded release];
     if (result) break;
   }
+  [pool drain];
+  return result;
+}
+
+// Regression for -[NSArray getObjects:range:] used by Pocket God 1.48.2.
+// Apple: https://developer.apple.com/documentation/foundation/nsarray/getobjects(_:range:)
+@interface NSArray (GetObjectsRangeTests)
+- (void)getObjects:(id *)buffer range:(NSRange)range;
+@end
+
+int test_NSArray_getObjects_range(void) {
+  NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+  id first = [[NSObject alloc] init];
+  id second = [[NSObject alloc] init];
+  id third = [[NSObject alloc] init];
+  NSArray *array = [NSArray arrayWithObjects:first, second, third, nil];
+  id buffer[3] = {nil, nil, nil};
+
+  [array getObjects:buffer range:NSMakeRange(1, 2)];
+  int result = buffer[0] == second && buffer[1] == third && buffer[2] == nil ? 0 : -1;
+
+  if (!result) {
+    buffer[0] = nil;
+    [array getObjects:buffer range:NSMakeRange(0, 1)];
+    if (buffer[0] != first) result = -2;
+  }
+  if (!result) {
+    [array getObjects:NULL range:NSMakeRange(3, 0)];
+    [array getObjects:buffer range:NSMakeRange(3, 0)];
+    if (buffer[0] != first) result = -3;
+  }
+
+  // Pocket God uses NSMutableArray, so test the inherited selector there too.
+  NSMutableArray *mutable = [[NSMutableArray alloc] init];
+  [mutable addObject:first];
+  [mutable addObject:second];
+  [mutable addObject:third];
+  if (!result) {
+    buffer[0] = buffer[1] = buffer[2] = nil;
+    [mutable getObjects:buffer range:NSMakeRange(1, 2)];
+    if (buffer[0] != second || buffer[1] != third || buffer[2] != nil)
+      result = -4;
+  }
+  [mutable release];
+  [first release];
+  [second release];
+  [third release];
   [pool drain];
   return result;
 }
