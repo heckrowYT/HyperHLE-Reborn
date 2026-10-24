@@ -175,6 +175,34 @@ pub const CLASSES: ClassExports = objc_classes! {
     idx != NSNotFound as NSUInteger
 }
 
+
+// NSArray's getObjects:range: copies pointers into the caller's buffer.
+// The array still owns the objects; copying them must not retain or release.
+- (())getObjects:(MutPtr<id>)objects range:(NSRange)range {
+    // NSRange has packed fields, so copy them out before formatting.
+    let (start, length) = (range.location, range.length);
+    let count: NSUInteger = msg![env; this count];
+    let Some(end) = start.checked_add(length) else {
+        log!("Warning: getObjects:range: range overflow");
+        return;
+    };
+    if end > count {
+        log!(
+            "Warning: getObjects:range: out of bounds (start {}, length {}, count {})",
+            start, length, count
+        );
+        return;
+    }
+    if length != 0 && objects.is_null() {
+        log!("Warning: getObjects:range: NULL destination for non-empty range");
+        return;
+    }
+    for i in 0..length {
+        let object: id = msg![env; this objectAtIndex:(start + i)];
+        env.mem.write(objects + i, object);
+    }
+}
+
 - (id)firstObject {
     let size: NSUInteger = msg![env; this count];
     if size == 0 {
